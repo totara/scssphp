@@ -51,11 +51,21 @@ class SourceMapGenerator
         // output source contents?
         'outputSourceFiles' => false,
 
+        // source files to skip generating mappings for
+        'excludeSourceFiles' => [],
+
         // base path for filename normalization
         'sourceMapRootpath' => '',
 
         // base path for filename normalization
-        'sourceMapBasepath' => ''
+        'sourceMapBasepath' => '',
+
+        // apply sourcemaps present in the source files to the generated code
+        // useful if your original source is already generated code, e.g. a
+        // bundle of scss files
+        // only works for inline source maps
+        // 'outputSourceFiles' must also be enabled
+        'sourceMapApplyInline' => false,
     ];
 
     /**
@@ -86,6 +96,14 @@ class SourceMapGenerator
      */
     protected $sources = [];
     protected $sourceKeys = [];
+    protected $sourceContent = [];
+
+    /**
+     * Excluded sources (map of [file] => true)
+     *
+     * @var array
+     */
+    protected $excludedSources = [];
 
     /**
      * @var array
@@ -96,6 +114,17 @@ class SourceMapGenerator
     {
         $this->options = array_merge($this->defaultOptions, $options);
         $this->encoder = new Base64VLQ();
+        $this->excludedSources = array_fill_keys($this->options['excludeSourceFiles'], true);
+    }
+
+    /**
+     * Set the source content for an original file
+     *
+     * @param string $content    The content of the source file
+     * @param string $sourceFile The original source file
+     */
+    public function setSourceContent($content, $sourceFile) {
+        $this->sourceContent[$sourceFile] = $content;
     }
 
     /**
@@ -109,6 +138,10 @@ class SourceMapGenerator
      */
     public function addMapping($generatedLine, $generatedColumn, $originalLine, $originalColumn, $sourceFile)
     {
+        if (! empty($this->excludedSources[$sourceFile])) {
+            return;
+        }
+
         $this->mappings[] = [
             'generated_line'   => $generatedLine,
             'generated_column' => $generatedColumn,
@@ -159,6 +192,10 @@ class SourceMapGenerator
      */
     public function generateJson()
     {
+        if ($this->options['outputSourceFiles']) {
+            $this->loadSources();
+        }
+
         $sourceMap = [];
         $mappings  = $this->generateMappings();
 
@@ -209,6 +246,58 @@ class SourceMapGenerator
     }
 
     /**
+     * Try and load the content for each source we do not have
+     *
+     * Also applies inline source maps if sourceMapApplyInline is enabled
+     */
+    protected function loadSources()
+    {
+        $needsLoad = true;
+        while ($needsLoad) {
+            $needsLoad = false;
+            foreach ($this->sources as $sourceFile) {
+                if (isset($this->sourceContent[$sourceFile])) {
+                    $result = $this->sourceContent[$sourceFile];
+                } else {
+                    $result = @file_get_contents($sourceFile);
+                    if ($result === false) {
+                        $result = null;
+                    }
+                    $this->sourceContent[$sourceFile] = $result;
+                }
+
+                if ($this->options['sourceMapApplyInline']) {
+                    preg_match(
+                        '/(?:\/\*|\/\/)# sourceMappingURL=data:([^,]+),(\S*) *(?:\*\/|[\r\n]|$)/',
+                        $result,
+                        $match,
+                        PREG_OFFSET_CAPTURE
+                    );
+
+                    if ($match) {
+                        $map = null;
+                        if ($match[1][0] == 'application/json;charset=utf-8;base64') {
+                            $map = json_decode(base64_decode($match[2][0]));
+                        } else if ($match[1][0] == 'application/json'
+                            || $match[1][0] == 'application/json;charset=utf-8'
+                        ) {
+                            $map = json_decode(rawurldecode($match[2][0]));
+                        }
+                        if ($map) {
+                            // strip source mapping comment
+                            $result = substr($result, 0, $match[0][1]) .
+                                substr($result, $match[0][1] + strlen($match[0][0]));
+                            $this->sourceContent[$sourceFile] = $result;
+                            $needsLoad = true;
+                            $this->applySourceMap(new SourceMapConsumer($map), $sourceFile);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Returns the sources contents
      *
      * @return array|null
@@ -222,7 +311,12 @@ class SourceMapGenerator
         $content = [];
 
         foreach ($this->sources as $sourceFile) {
-            $content[] = file_get_contents($sourceFile);
+            if (isset($this->sourceContent[$sourceFile])) {
+                $result = $this->sourceContent[$sourceFile];
+            } else {
+                $result = null;
+            }
+            $content[] = $result;
         }
 
         return $content;
@@ -344,5 +438,45 @@ class SourceMapGenerator
         }
 
         return $path;
+    }
+
+    /**
+     * Apply a source map for a source file to this source map.
+     * Each mapping to the supplied source file is rewritten using the supplied source map.
+     *
+     * @param SourceMapConsumer $consumer
+     * @param string $sourceFile
+     */
+    public function applySourceMap($consumer, $sourceFile)
+    {
+        $newSources = [];
+
+        foreach ($this->mappings as &$mapping) {
+            if ($mapping['source_file'] == $sourceFile && $mapping['original_line'] != null) {
+                $original = $consumer->originalPositionFor($mapping['original_line'], $mapping['original_column']);
+
+                if ($original && $original['source_file']) {
+                    if (! empty($this->excludedSources[$original['source_file']])) {
+                        continue;
+                    }
+                    $mapping['source_file'] = $original['source_file'];
+                    $mapping['original_line'] = $original['line'];
+                    $mapping['original_column'] = $original['column'];
+                }
+            }
+
+            if (! empty($mapping['source_file']) && ! isset($newSources[$mapping['source_file']])) {
+                $newSources[$mapping['source_file']] = $mapping['source_file'];
+            }
+        }
+
+        $this->sources = $newSources;
+
+        foreach ($consumer->getSources() as $subSourceFile) {
+            $content = $consumer->sourceContentFor($subSourceFile);
+            if ($content !== null) {
+                $this->setSourceContent($content, $subSourceFile);
+            }
+        }
     }
 }

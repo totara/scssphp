@@ -144,8 +144,7 @@ class Parser
     {
         $this->sourceName       = $sourceName ?: '(stdin)';
         $this->sourceIndex      = $sourceIndex;
-        $this->utf8             = ! $encoding || strtolower($encoding) === 'utf-8';
-        $this->patternModifiers = $this->utf8 ? 'Aisu' : 'Ais';
+        $this->setUtf8(! $encoding || strtolower($encoding) === 'utf-8');
         $this->commentsSeen     = [];
         $this->allowVars        = true;
         $this->cssOnly          = $cssOnly;
@@ -159,12 +158,31 @@ class Parser
             $commentMultiRight  = '\*\/';
 
             static::$commentPattern = $commentMultiLeft . '.*?' . $commentMultiRight;
-            static::$whitePattern = $this->utf8
-                ? '/' . $commentSingle . '[^\n]*\s*|(' . static::$commentPattern . ')\s*|\s+/AisuS'
-                : '/' . $commentSingle . '[^\n]*\s*|(' . static::$commentPattern . ')\s*|\s+/AisS';
+            static::$whitePattern = $commentSingle . '[^\n]*\s*|(' . static::$commentPattern . ')\s*|\s+';
         }
 
         $this->cache = $cache;
+    }
+
+    /**
+     * Get whether utf-8 parsing is enabled.
+     *
+     * @return bool
+     */
+    protected function getUtf8()
+    {
+        return $this->utf8;
+    }
+
+    /**
+     * Set whether utf-8 parsing is enabled.
+     *
+     * @param bool $utf8
+     */
+    protected function setUtf8($utf8)
+    {
+        $this->utf8 = $utf8;
+        $this->patternModifiers = $this->utf8 ? 'Aisu' : 'Ais';
     }
 
     /**
@@ -264,11 +282,25 @@ class Parser
             $buffer = substr($buffer, 3);
         }
 
+        $old_utf8 = $this->getUtf8();
+
         $this->buffer          = rtrim($buffer, "\x00..\x1f");
         $this->count           = 0;
         $this->env             = null;
         $this->inParens        = false;
         $this->eatWhiteDefault = true;
+
+        // Disable utf-8 mode if file only contains ASCII characters.
+        // In versions of PHP below 7.4, when the unicode (u) flag is set PREG
+        // will validate the entire string is valid utf-8 on every preg_match
+        // call.
+        // This is an exponential time problem as the longer a file is the more
+        // characters it has to check and the more regex calls are made. This
+        // causes parsing to take more than 200x longer with utf-8 enabled on
+        // a large file.
+        if ($old_utf8) {
+            $this->setUtf8(! mb_check_encoding($buffer, 'ascii'));
+        }
 
         $this->saveEncoding();
         $this->extractLineNumbers($buffer);
@@ -278,25 +310,33 @@ class Parser
             throw new ParserException($message);
         }
 
-        $this->pushBlock(null); // root block
-        $this->whitespace();
-        $this->pushBlock(null);
-        $this->popBlock();
+        try {
+            $this->pushBlock(null); // root block
+            $this->whitespace();
+            $this->pushBlock(null);
+            $this->popBlock();
 
-        while ($this->parseChunk()) {
-            ;
+            while ($this->parseChunk()) {
+                ;
+            }
+
+            if ($this->count !== strlen($this->buffer)) {
+                throw $this->parseError();
+            }
+
+            if (! empty($this->env->parent)) {
+                throw $this->parseError('unclosed block');
+            }
+
+            if ($this->charset) {
+                array_unshift($this->env->children, $this->charset);
+            }
+        } finally {
+            assert($this->env !== null);
+            $this->restoreEncoding();
+            $this->setUtf8($old_utf8);
         }
-
-        if ($this->count !== \strlen($this->buffer)) {
-            throw $this->parseError();
-        }
-
-        if (! empty($this->env->parent)) {
-            throw $this->parseError('unclosed block');
-        }
-
-        $this->restoreEncoding();
-        assert($this->env !== null);
+      
 
         if ($this->cache) {
             $this->cache->setCache('parse', $cacheKey, $this->env, $parseOptions);
@@ -323,19 +363,22 @@ class Parser
         $this->eatWhiteDefault = true;
         $this->buffer          = (string) $buffer;
 
+        $this->setUtf8(! mb_check_encoding($buffer, 'ascii'));
         $this->saveEncoding();
         $this->extractLineNumbers($this->buffer);
 
-        $list = $this->valueList($out);
+        try {
+            $list = $this->valueList($out);
+        } finally {
+            if ($this->count !== \strlen($this->buffer)) {
+                $error = $this->parseError('Expected end of value');
+                $message = 'Passing trailing content after the expression when parsing a value is deprecated since Scssphp 1.12.0 and will be an error in 2.0. ' . $error->getMessage();
 
-        if ($this->count !== \strlen($this->buffer)) {
-            $error = $this->parseError('Expected end of value');
-            $message = 'Passing trailing content after the expression when parsing a value is deprecated since Scssphp 1.12.0 and will be an error in 2.0. ' . $error->getMessage();
+                @trigger_error($message, E_USER_DEPRECATED);
+            }
 
-            @trigger_error($message, E_USER_DEPRECATED);
+            $this->restoreEncoding();
         }
-
-        $this->restoreEncoding();
 
         return $list;
     }
@@ -367,9 +410,11 @@ class Parser
         $this->whitespace();
         $this->discardComments = false;
 
-        $selector = $this->selectors($out);
-
-        $this->restoreEncoding();
+        try {
+            $selector = $this->selectors($out);
+        } finally {
+            $this->restoreEncoding();
+        }
 
         if ($shouldValidate && $this->count !== strlen($buffer)) {
             throw $this->parseError("`" . substr($buffer, $this->count) . "` is not a valid Selector in `$buffer`");
@@ -402,9 +447,11 @@ class Parser
 
         $this->whitespace();
 
-        $isMediaQuery = $this->mediaQueryList($out);
-
-        $this->restoreEncoding();
+        try {
+            $isMediaQuery = $this->mediaQueryList($out);
+        } finally {
+            $this->restoreEncoding();
+        }
 
         return $isMediaQuery;
     }
@@ -1607,7 +1654,7 @@ class Parser
     {
         $gotWhite = false;
 
-        while (preg_match(static::$whitePattern, $this->buffer, $m, 0, $this->count)) {
+        while (preg_match('/' . static::$whitePattern . '/' . $this->patternModifiers . 'S', $this->buffer, $m, 0, $this->count)) {
             if (isset($m[1]) && empty($this->commentsSeen[$this->count])) {
                 // comment that are kept in the output CSS
                 $comment = [];
@@ -3411,7 +3458,7 @@ class Parser
         }
 
         // match comment hack
-        if (preg_match(static::$whitePattern, $this->buffer, $m, 0, $this->count)) {
+        if (preg_match('/' . static::$whitePattern . '/' . $this->patternModifiers . 'S', $this->buffer, $m, 0, $this->count)) {
             if (! empty($m[0])) {
                 $parts[] = $m[0];
                 $this->count += \strlen($m[0]);

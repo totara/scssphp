@@ -280,12 +280,13 @@ class Compiler
         $out = $this->formatter->format($this->scope, $sourceMapGenerator);
 
         if (! empty($out) && $this->sourceMap && $this->sourceMap !== self::SOURCE_MAP_NONE) {
+            $sourceMapGenerator->setSourceContent($code, $path ? $path : '(stdin)');
             $sourceMap    = $sourceMapGenerator->generateJson();
             $sourceMapUrl = null;
 
             switch ($this->sourceMap) {
                 case self::SOURCE_MAP_INLINE:
-                    $sourceMapUrl = sprintf('data:application/json,%s', Util::encodeURIComponent($sourceMap));
+                    $sourceMapUrl = sprintf('data:application/json;charset=utf-8;base64,%s', base64_encode($sourceMap));
                     break;
 
                 case self::SOURCE_MAP_FILE:

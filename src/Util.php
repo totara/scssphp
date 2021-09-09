@@ -53,18 +53,4 @@ class Util
 
         throw new RangeException("$name {$val} must be between {$range->first} and {$range->last}$unit");
     }
-
-    /**
-     * Encode URI component
-     *
-     * @param string $string
-     *
-     * @return string
-     */
-    public static function encodeURIComponent($string)
-    {
-        $revert = ['%21' => '!', '%2A' => '*', '%27' => "'", '%28' => '(', '%29' => ')'];
-
-        return strtr(rawurlencode($string), $revert);
-    }
 }

@@ -6250,7 +6250,7 @@ EOL;
                 continue;
             }
 
-            $file = $this->sourceNames[$env->block->sourceIndex];
+            $file = $this->sourceNames[$env->block->sourceIndex] ?? '';
 
             if ($file === null) {
                 continue;

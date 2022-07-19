@@ -4512,7 +4512,7 @@ class Compiler
                 continue;
             }
 
-            $file = $this->sourceNames[$env->block->sourceIndex];
+            $file = $this->sourceNames[$env->block->sourceIndex] ?? '';
 
             if (realpath($file) === $name) {
                 $this->throwError('An @import loop has been found: %s imports %s', $file, basename($file));

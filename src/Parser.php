@@ -327,10 +327,6 @@ class Parser
             if (! empty($this->env->parent)) {
                 throw $this->parseError('unclosed block');
             }
-
-            if ($this->charset) {
-                array_unshift($this->env->children, $this->charset);
-            }
         } finally {
             assert($this->env !== null);
             $this->restoreEncoding();

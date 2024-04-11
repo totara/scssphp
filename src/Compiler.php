@@ -326,8 +326,10 @@ class Compiler
      * The directory of the currently processed file
      *
      * @var string|null
+     * 
+     * Changed to protected by Totara
      */
-    private $currentDirectory;
+    protected $currentDirectory;
 
     /**
      * The directory of the input file

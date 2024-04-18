@@ -37,6 +37,7 @@ use ScssPhp\ScssPhp\Logger\LoggerInterface;
 use ScssPhp\ScssPhp\Logger\StreamLogger;
 use ScssPhp\ScssPhp\Node\Number;
 use ScssPhp\ScssPhp\SourceMap\SourceMapGenerator;
+use ScssPhp\ScssPhp\Transforms\TransformCompiler;
 use ScssPhp\ScssPhp\Util\Path;
 
 /**
@@ -352,6 +353,20 @@ class Compiler
     private $warnedChildFunctions = [];
 
     /**
+     * Optional file loader
+     *
+     * @var callable|null
+     */
+    protected $fileLoader = null;
+
+    /**
+     * Used to handle transformations of the tree.
+     *
+     * @var TransformCompiler
+     */
+    protected TransformCompiler $transformer;
+
+    /**
      * Constructor
      *
      * @param array|null $cacheOptions
@@ -369,6 +384,7 @@ class Compiler
         }
 
         $this->logger = new StreamLogger(fopen('php://stderr', 'w'), true);
+        $this->transformer = new TransformCompiler();
     }
 
     /**
@@ -5748,6 +5764,8 @@ EOL;
      */
     protected function importFile($path, OutputBlock $out)
     {
+        [$path, $transforms] = $this->transformer->extractTransformsFromPath($path);
+
         $this->pushCallStack('import ' . $this->getPrettyPath($path));
         // see if tree is cached
         $realPath = realpath($path);
@@ -5755,6 +5773,8 @@ EOL;
         if ($realPath === false) {
             $realPath = $path;
         }
+
+        $cacheKey = ($transforms ? implode('!', $transforms) : '') . $realPath;
 
         if (substr($path, -5) === '.sass') {
             $this->sourceIndex = \count($this->sourceNames);
@@ -5765,16 +5785,28 @@ EOL;
             throw $this->error('The Sass indented syntax is not implemented.');
         }
 
-        if (isset($this->importCache[$realPath])) {
+        if (isset($this->importCache[$cacheKey])) {
             $this->handleImportLoop($realPath);
 
-            $tree = $this->importCache[$realPath];
+            $tree = $this->importCache[$cacheKey];
         } else {
-            $code   = file_get_contents($path);
-            $parser = $this->parserFactory($path);
-            $tree   = $parser->parse($code);
+            // Allow the custom file loaders
+            if ($this->fileLoader !== null) {
+                $code = call_user_func($this->fileLoader, $path);
+            } else {
+                $code = file_get_contents($path);
+            }
 
-            $this->importCache[$realPath] = $tree;
+            // Apply webpack-style transforms to the tree
+            if ($transforms) {
+                // Apply the named transformations
+                $tree = $this->transformer->applyTransformations($transforms, $path, $code, fn($path, $code) => $this->parserFactory($path)->parse($code));
+            } else {
+                $parser = $this->parserFactory($path);
+                $tree = $parser->parse($code);
+            }
+
+            $this->importCache[$cacheKey] = $tree;
         }
 
         $currentDirectory = $this->currentDirectory;
@@ -5817,7 +5849,9 @@ EOL;
     }
 
     /**
-     * Return the file path for an import url if it exists
+     * Return the file path for an import url if it exists.
+     *
+     * This includes an override supporting webkit transformations.
      *
      * @internal
      *
@@ -5828,6 +5862,16 @@ EOL;
      */
     public function findImport($url, $currentDir = null)
     {
+        $pos = strrpos($url, '!');
+        if ($pos !== false) {
+            [$path, $transforms] = $this->transformer->extractTransformsFromPath($url);
+            $result = $this->findImport($path, $currentDir);
+            if ($result === null) {
+                throw $this->error("`$path` file not found for @import");
+            }
+            return implode('!', $transforms) . "!$result";
+        }
+
         // Vanilla css and external requests. These are not meant to be Sass imports.
         // Callback importers are still called for BC.
         if (self::isCssImport($url)) {
@@ -6250,7 +6294,7 @@ EOL;
                 continue;
             }
 
-            $file = $this->sourceNames[$env->block->sourceIndex] ?? '';
+            $file = $this->sourceNames[$env->block->sourceIndex] ?? null;
 
             if ($file === null) {
                 continue;
@@ -10469,5 +10513,25 @@ TXT;
         }
 
         return [Type::T_LIST, ',', $listParts];
+    }
+
+    /**
+     * Set the file loader.
+     *
+     * @param callable|null $fileLoader
+     * @return void
+     */
+    public function setFileLoader(?callable $fileLoader): void
+    {
+        $this->fileLoader = $fileLoader;
+    }
+
+    /**
+     * @param TransformCompiler $compiler
+     * @return void
+     */
+    public function setTransformer(TransformCompiler $compiler): void
+    {
+        $this->transformer = $compiler;
     }
 }

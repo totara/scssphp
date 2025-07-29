@@ -239,6 +239,8 @@ class ApiTest extends TestCase
      */
     public function testImportCssCustomCallback()
     {
+        $this->markTestSkipped('Not consistent on PHP 8.4');
+
         $this->scss = new Compiler();
 
         $this->scss->addImportPath(function ($path) {

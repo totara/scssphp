@@ -1,7 +1,7 @@
 {
-    "name": "scssphp/scssphp",
+    "name": "totara/scssphp",
     "type": "library",
-    "description": "scssphp is a compiler for SCSS written in PHP.",
+    "description": "Totara fork of scssphp",
     "keywords": ["css", "stylesheet", "scss", "sass", "less"],
     "homepage": "https://scssphp.github.io/scssphp/",
     "license": [
@@ -26,7 +26,7 @@
         "psr-4": { "ScssPhp\\ScssPhp\\Tests\\": "tests/" }
     },
     "require": {
-        "php": ">=8.1",
+        "php": ">=8.2.0",
         "ext-ctype": "*",
         "ext-json": "*",
         "ext-mbstring": "*",
@@ -127,5 +127,8 @@
     ],
     "config": {
         "sort-packages": true
+    },
+    "replace": {
+        "scssphp/scssphp": "self.version"
     }
 }

@@ -1,10 +1,8 @@
 # scssphp
-### <https://scssphp.github.io/scssphp>
-
-![Build](https://github.com/scssphp/scssphp/workflows/CI/badge.svg)
-[![License](https://poser.pugx.org/scssphp/scssphp/license)](https://packagist.org/packages/scssphp/scssphp)
 
 `scssphp` is a compiler for SCSS written in PHP.
+
+This is the Totara fork, with Totara-specific compatibility changes.
 
 Checkout the homepage, <https://scssphp.github.io/scssphp>, for directions on how to use.
 

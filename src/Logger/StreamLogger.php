@@ -37,7 +37,7 @@ class StreamLogger implements LoggerInterface
      */
     public function __destruct()
     {
-        if ($this->closeOnDestruct) {
+        if ($this->closeOnDestruct && $this->stream) {
             fclose($this->stream);
         }
     }
@@ -47,6 +47,9 @@ class StreamLogger implements LoggerInterface
      */
     public function warn($message, $deprecation = false)
     {
+        if (!$this->stream) {
+            return;
+        }
         $prefix = ($deprecation ? 'DEPRECATION ' : '') . 'WARNING: ';
 
         fwrite($this->stream, $prefix . $message . "\n\n");
@@ -57,6 +60,9 @@ class StreamLogger implements LoggerInterface
      */
     public function debug($message)
     {
+        if (!$this->stream) {
+            return;
+        }
         fwrite($this->stream, $message . "\n");
     }
 }
